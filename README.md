@@ -21,7 +21,7 @@ Only fires on **CJK ↔ ASCII boundaries** — leaves code internals alone (`lev
 ## Install
 
 ```bash
-git clone https://github.com/<YOUR_USERNAME>/cjk-fullwidth-punct \
+git clone https://github.com/jimmysu0309/cjk-fullwidth-punct \
   ~/.claude/skills/cjk-fullwidth-punct
 ```
 
