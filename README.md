@@ -42,20 +42,31 @@ or batch-convert the whole file (if many).
 
 ## Use the script directly
 
+Plain text / source comments:
+
 ```bash
-bash ~/.claude/skills/cjk-fullwidth-punct/scripts/fix.sh path/to/file.md
+bash ~/.claude/skills/cjk-fullwidth-punct/scripts/fix.sh path/to/file.txt
 ```
 
 Output:
 
 ```
-✓ path/to/file.md: remaining boundary hits=0 mojibake=0
+✓ path/to/file.txt: remaining boundary hits=0 mojibake=0
+```
+
+Markdown (skips fenced code blocks and inline `code` spans — prose only):
+
+```bash
+python3 ~/.claude/skills/cjk-fullwidth-punct/scripts/fix-md.py path/to/file.md
 ```
 
 ## What's included
 
 - `SKILL.md` — full procedure (detection / batch / verify / mojibake recovery / scope notes)
 - `scripts/fix.sh` — one-shot batch script (perl with unicode escapes, no mojibake risk)
+- `scripts/fix-md.py` — markdown-aware variant: converts prose only, never touches
+  fenced blocks / inline code spans; repairs paren pairs and flags cross-code-span
+  asymmetric pairs for manual review
 
 ## Why a skill (vs. just a script)
 

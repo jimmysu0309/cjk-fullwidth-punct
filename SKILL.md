@@ -12,6 +12,7 @@ description: |
   Strategy: detect via grep on CJK↔ASCII boundary, batch-convert via perl with unicode
   escapes (NEVER paste full-width literals into perl source — produces mojibake).
   Skips code-internal punctuation (preserves `'off'` quotes, `level === 'x'` etc.).
+  Markdown files route to scripts/fix-md.py (skips fenced blocks + inline code spans).
   Includes mojibake-recovery procedure if a previous run mis-encoded.
 ---
 
@@ -69,8 +70,26 @@ non-empty output blocks "task complete" until fixed.
 - **Many hits across whole file (or batch fix is acceptable)**: Use Step 3 perl batch.
   Caveat: this will modify legacy/inherited sections too. If that's not desired, fall
   back to Edit one-by-one.
+- **Markdown / prose-mixed-with-code files (CHANGELOG, SPEC, README, tech docs)**:
+  do NOT use the Step 3 perl batch — it is line-global and will convert punctuation
+  inside inline code spans and fenced blocks (regex patterns, DOM trees, `calc(...)`),
+  violating Scope Boundaries (observed 2026-06-11 on a CHANGELOG with 104 hit lines,
+  most inside code spans). Use the bundled markdown-aware script instead:
+
+  ```bash
+  python3 ${CLAUDE_SKILL_DIR}/scripts/fix-md.py <file.md> [...]
+  ```
+
+  It skips fenced blocks and backtick spans, converts prose only, repairs
+  same-segment paren pairs, codepoint-asserts its own mapping (CRITICAL #2), and
+  prints `REVIEW` lines for cross-code-span asymmetric pairs (see Step 3b) that
+  need manual fixing. After it runs, re-detect (Step 1): remaining hits should all
+  be inside code spans / fenced blocks — eyeball them to confirm, then leave them.
 
 ## Step 3: Batch Fix (Perl with Unicode Escapes)
+
+Plain-text / source-comment files only — for markdown use `scripts/fix-md.py`
+(see Step 2), which honors the code-span exclusions this perl batch cannot.
 
 **CRITICAL #1 — escapes, not literals**: Use `\x{...}` unicode escapes in perl source
 code. Do NOT paste full-width literals (`，` `（` etc.) directly. Perl source defaults
@@ -142,6 +161,25 @@ perl -CSDA -i -pe '
 
 Skip this pass when the file legitimately mixes notation (e.g. math intervals like
 `[startMs, endMs)` inside a Chinese comment) — review hits first.
+
+### Cross-code-span pairs (markdown): manual repair only
+
+In markdown, a paren pair whose halves are separated by an inline code span —
+e.g. ``(`Shift` 反向）`` or ``（only `aria-label`)`` — is invisible to both the
+perl repair above and fix-md.py's segment-local repair (the open and close land
+in different prose segments). Detect them with a wide-window scan (named capture,
+substitution-safe per CRITICAL #3):
+
+```bash
+perl -CSDA -ne 'print "$ARGV:$.: $+{hit}\n" while /(?<hit>\x{ff08}[^()\x{ff08}\x{ff09}]{0,200}\)|\([^()\x{ff08}\x{ff09}]{0,200}\x{ff09})/g' <file>
+```
+
+(fix-md.py prints the same candidates as `REVIEW` lines after converting.)
+
+**Review every hit before fixing — this scan has a known false positive**: a code
+span containing a bare `(` or `)` (e.g. a regex literal ``（`top.find\s*\(...`）``)
+between legitimate full-width parens will match. Fix only true prose pairs, via
+the Edit tool or a unique-string replacement that asserts exactly one occurrence.
 
 ## Step 4: Verify
 
@@ -227,3 +265,18 @@ Updated 2026-06-11 after a second real-world session surfaced two more failure m
    the conversion ran cleanly but changed nothing, while detection kept reporting
    hits (a silent no-op, the inverse of the mojibake failure). Hence CRITICAL #2:
    build maps from escapes and codepoint-check replacement values before running.
+
+Updated 2026-06-11 (later the same day) after a third session ran the skill over a
+JRead changelog/spec (markdown, 120 hit lines):
+
+3. **The perl batch violated the skill's own Scope Boundaries on markdown**: most
+   hits sat inside inline code spans (cleaner regex patterns, DOM trees,
+   `calc(...)`) which Scope Boundaries says must not be touched — but Step 3 had no
+   mechanism to honor that. The session had to improvise a throwaway code-span-aware
+   converter; it is now bundled as `scripts/fix-md.py` and Step 2 routes markdown
+   files to it.
+4. **Cross-code-span asymmetric pairs**: 10 paren pairs had one half in prose and
+   the other separated by a code span — unreachable by any segment-local repair.
+   Step 3b now documents the wide-window detection scan, its known false positive
+   (bare `\(` inside a code span between full-width parens), and the
+   unique-string-replacement repair pattern.
