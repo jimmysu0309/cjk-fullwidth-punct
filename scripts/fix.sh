@@ -20,21 +20,33 @@ for FILE in "$@"; do
     continue
   fi
 
+  # Lookarounds only — no capture groups / no dollar-digit backreferences.
+  # Why: SKILL.md snippets must stay dollar-digit-free (Claude Code substitutes
+  # positional placeholders into rendered skill markdown when invoked with args);
+  # keeping the script identical means copy-paste between the two stays safe.
   perl -CSDA -i -pe '
-    s/(\p{Han})\(/$1\x{ff08}/g;
-    s/(\p{Han})\)/$1\x{ff09}/g;
-    s/\((\p{Han})/\x{ff08}$1/g;
-    s/\)(\p{Han})/\x{ff09}$1/g;
-    s/(\p{Han}),/$1\x{ff0c}/g;
-    s/,(\p{Han})/\x{ff0c}$1/g;
-    s/(\p{Han});/$1\x{ff1b}/g;
-    s/;(\p{Han})/\x{ff1b}$1/g;
-    s/(\p{Han}):/$1\x{ff1a}/g;
-    s/:(\p{Han})/\x{ff1a}$1/g;
-    s/(\p{Han})!/$1\x{ff01}/g;
-    s/!(\p{Han})/\x{ff01}$1/g;
-    s/(\p{Han})\?/$1\x{ff1f}/g;
-    s/\?(\p{Han})/\x{ff1f}$1/g;
+    s/(?<=\p{Han})\(/\x{ff08}/g;
+    s/(?<=\p{Han})\)/\x{ff09}/g;
+    s/\((?=\p{Han})/\x{ff08}/g;
+    s/\)(?=\p{Han})/\x{ff09}/g;
+    s/(?<=\p{Han}),/\x{ff0c}/g;
+    s/,(?=\p{Han})/\x{ff0c}/g;
+    s/(?<=\p{Han});/\x{ff1b}/g;
+    s/;(?=\p{Han})/\x{ff1b}/g;
+    s/(?<=\p{Han}):/\x{ff1a}/g;
+    s/:(?=\p{Han})/\x{ff1a}/g;
+    s/(?<=\p{Han})!/\x{ff01}/g;
+    s/!(?=\p{Han})/\x{ff01}/g;
+    s/(?<=\p{Han})\?/\x{ff1f}/g;
+    s/\?(?=\p{Han})/\x{ff1f}/g;
+  ' "$FILE"
+
+  # Repair asymmetric paren pairs left by boundary-only conversion, e.g. a
+  # full-width open with a half-width close. Named capture ($+{inner}) is
+  # substitution-safe per the note above.
+  perl -CSDA -i -pe '
+    s/\x{ff08}(?<inner>[^()\x{ff08}\x{ff09}]*)\)/\x{ff08}$+{inner}\x{ff09}/g;
+    s/\((?<inner>[^()\x{ff08}\x{ff09}]*)\x{ff09}/\x{ff08}$+{inner}\x{ff09}/g;
   ' "$FILE"
 
   # Use perl for detection (BSD grep on macOS lacks -P; perl works everywhere)

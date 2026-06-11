@@ -72,35 +72,76 @@ non-empty output blocks "task complete" until fixed.
 
 ## Step 3: Batch Fix (Perl with Unicode Escapes)
 
-**CRITICAL**: Use `\x{...}` unicode escapes in perl source code. Do NOT paste
-full-width literals (`，` `（` etc.) directly. Perl source defaults to latin1; pasted
-literals are byte-decoded as latin1 codepoints, then `-A` re-encodes them as UTF-8 →
-**6-byte mojibake** (e.g. `（` becomes `c3 af c2 bc c2 88` instead of `ef bc 88`).
+**CRITICAL #1 — escapes, not literals**: Use `\x{...}` unicode escapes in perl source
+code. Do NOT paste full-width literals (`，` `（` etc.) directly. Perl source defaults
+to latin1; pasted literals are byte-decoded as latin1 codepoints, then `-A` re-encodes
+them as UTF-8 → **6-byte mojibake** (e.g. `（` becomes `c3 af c2 bc c2 88` instead of
+`ef bc 88`).
+
+**CRITICAL #2 — this applies to ANY generated source, not just perl**: full-width
+literals typed into a bash heredoc / python dict / grep pattern inside a tool call can
+silently arrive as their HALF-width counterparts (observed 2026-06-11: a python
+mapping dict authored as half→full came out half→half → conversion ran with ZERO
+changes while detection kept reporting hits). Always build replacement maps from
+escapes (`\x{ff0c}` in perl, `'\\uff0c'` in python), and before running, print the
+codepoints of your replacement values and confirm they are in the `0xffXX` family:
+
+```bash
+python3 -c "M={',':'\\uff0c'}; print([hex(ord(v)) for v in M.values()])"  # expect 0xff0c
+```
+
+**CRITICAL #3 — never use `$`+digit in these snippets (skill-file corruption)**:
+when this skill is invoked with arguments, Claude Code substitutes positional
+argument placeholders (dollar-sign + digit, and the all-arguments placeholder) inside
+SKILL.md **before rendering it** — a perl replacement like `s/(\p{Han}),/` + dollar-1
++ `\x{ff0c}/g` gets its dollar-1 replaced by the invocation arguments, corrupting the
+documented command exactly when it is needed (observed 2026-06-11). Therefore every
+snippet below uses **lookarounds (no capture groups)** or **named captures**
+(`$+{name}` is not substituted). Files under `scripts/` are NOT substituted (they are
+executed, not rendered), so shell positional parameters there are fine — but keep
+their perl `$`+digit-free too, so copy-paste back into SKILL.md stays safe.
 
 ```bash
 perl -CSDA -i -pe '
-  s/(\p{Han})\(/$1\x{ff08}/g;
-  s/(\p{Han})\)/$1\x{ff09}/g;
-  s/\((\p{Han})/\x{ff08}$1/g;
-  s/\)(\p{Han})/\x{ff09}$1/g;
-  s/(\p{Han}),/$1\x{ff0c}/g;
-  s/,(\p{Han})/\x{ff0c}$1/g;
-  s/(\p{Han});/$1\x{ff1b}/g;
-  s/;(\p{Han})/\x{ff1b}$1/g;
-  s/(\p{Han}):/$1\x{ff1a}/g;
-  s/:(\p{Han})/\x{ff1a}$1/g;
-  s/(\p{Han})!/$1\x{ff01}/g;
-  s/!(\p{Han})/\x{ff01}$1/g;
-  s/(\p{Han})\?/$1\x{ff1f}/g;
-  s/\?(\p{Han})/\x{ff1f}$1/g;
+  s/(?<=\p{Han})\(/\x{ff08}/g;
+  s/(?<=\p{Han})\)/\x{ff09}/g;
+  s/\((?=\p{Han})/\x{ff08}/g;
+  s/\)(?=\p{Han})/\x{ff09}/g;
+  s/(?<=\p{Han}),/\x{ff0c}/g;
+  s/,(?=\p{Han})/\x{ff0c}/g;
+  s/(?<=\p{Han});/\x{ff1b}/g;
+  s/;(?=\p{Han})/\x{ff1b}/g;
+  s/(?<=\p{Han}):/\x{ff1a}/g;
+  s/:(?=\p{Han})/\x{ff1a}/g;
+  s/(?<=\p{Han})!/\x{ff01}/g;
+  s/!(?=\p{Han})/\x{ff01}/g;
+  s/(?<=\p{Han})\?/\x{ff1f}/g;
+  s/\?(?=\p{Han})/\x{ff1f}/g;
 ' <file>
 ```
 
 The `-CSDA` flags enable UTF-8 for stdin / stdout / stderr / `@ARGV`. `\p{Han}`
-matches Han ideographs (CJK).
+matches Han ideographs (CJK). Lookbehind/lookahead replace only the punctuation
+itself — no capture group, no dollar-digit backreference needed.
 
 Or use the bundled script: `bash ${CLAUDE_SKILL_DIR}/scripts/fix.sh <file>` — runs
 the same perl + verification in one shot.
+
+## Step 3b (optional): Repair Asymmetric Paren Pairs
+
+Boundary-only conversion can leave pairs like `（...)` — full-width open (was
+Han-adjacent) with half-width close (adjacent to ASCII, e.g. `（同 videoId 仍 active)`).
+Repair with named captures (substitution-safe, see CRITICAL #3):
+
+```bash
+perl -CSDA -i -pe '
+  s/\x{ff08}(?<inner>[^()\x{ff08}\x{ff09}]*)\)/\x{ff08}$+{inner}\x{ff09}/g;
+  s/\((?<inner>[^()\x{ff08}\x{ff09}]*)\x{ff09}/\x{ff08}$+{inner}\x{ff09}/g;
+' <file>
+```
+
+Skip this pass when the file legitimately mixes notation (e.g. math intervals like
+`[startMs, endMs)` inside a Chinese comment) — review hits first.
 
 ## Step 4: Verify
 
@@ -173,3 +214,16 @@ into perl source → produced mojibake. Recovery via byte-level reverse + redo w
 > Perl source code is byte-mode by default. Full-width literals in your perl `s///`
 > strings are read as latin1 bytes and double-encoded on output. Always use
 > `\x{ff08}` style unicode escapes, not paste-the-character.
+
+Updated 2026-06-11 after a second real-world session surfaced two more failure modes:
+
+1. **Skill-file argument substitution**: the skill was invoked with `args`, and Claude
+   Code substituted the positional placeholders inside the rendered SKILL.md — every
+   dollar-digit backreference in the documented perl became a fragment of the
+   invocation arguments. The snippets were rewritten to lookarounds / named captures
+   (CRITICAL #3) so they survive being rendered with arguments.
+2. **Half-width mangling of full-width literals in generated source**: a python
+   replacement dict authored inside a bash heredoc arrived with HALF-width values —
+   the conversion ran cleanly but changed nothing, while detection kept reporting
+   hits (a silent no-op, the inverse of the mojibake failure). Hence CRITICAL #2:
+   build maps from escapes and codepoint-check replacement values before running.

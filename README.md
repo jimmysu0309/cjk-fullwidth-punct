@@ -10,9 +10,9 @@ prefers full-width punctuation in CJK context.
 Detects and fixes punctuation like:
 
 ```
-中文,半形         →  中文,半形
-中文(英文)中文     →  中文(英文)中文
-參數;結尾         →  參數;結尾
+中文,半形         →  中文，半形
+中文(英文)中文     →  中文（英文）中文
+參數;結尾         →  參數；結尾
 ```
 
 Only fires on **CJK ↔ ASCII boundaries** — leaves code internals alone (`level === 'off'`,
@@ -70,6 +70,10 @@ auto-invoke. So in addition to a fix script, this skill carries:
   there's a documented byte-level reverse procedure.
 - Scope boundaries — when not to apply (URLs, decimals, code, inherited legacy
   comments respecting "歷史條目不主動改寫" type rules).
+- **Substitution-safe snippets** — all perl in `SKILL.md` uses lookarounds / named
+  captures, never dollar-digit backreferences (Claude Code substitutes positional
+  argument placeholders into skill markdown when the skill is invoked with args,
+  which would corrupt the documented commands).
 
 ## License
 
